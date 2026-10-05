@@ -58,8 +58,13 @@ if ($LASTEXITCODE -ne 0) { git checkout -- CMakeLists.txt; Fail "tests failed (v
 
 # --- commit, tag, push --------------------------------------------------------
 git add -A
-git -c core.safecrlf=false commit -q -m "Release $tag"
-if ($LASTEXITCODE -ne 0) { Fail "commit failed" }
+git diff --cached --quiet
+if ($LASTEXITCODE -ne 0) {
+    git -c core.safecrlf=false commit -q -m "Release $tag"
+    if ($LASTEXITCODE -ne 0) { Fail "commit failed" }
+} else {
+    Write-Host "Nothing new to commit; tagging the current commit."   # e.g. deploy X.Y.Z at the version already set
+}
 git tag -a $tag -m "jtty-sidecar $version"
 if ($LASTEXITCODE -ne 0) { Fail "tag failed" }
 git push origin main
