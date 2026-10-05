@@ -1,0 +1,6 @@
+# Normalise line endings in the repository to LF; Windows checkouts get CRLF for
+# the batch files only (cmd needs them), everything else as the platform prefers.
+* text=auto
+*.bat text eol=crlf
+*.png binary
+*.wav binary
