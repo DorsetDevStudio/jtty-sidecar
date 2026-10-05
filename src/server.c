@@ -3,9 +3,8 @@
 #include "server.h"
 #include "decoder.h"
 #include "encoder.h"
-#include "shm_win.h"
+#include "shm.h"
 
-#include <windows.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -26,7 +25,7 @@ static void publish(const JttyDecode *d, void *user)
     memset(r->text, ' ', sizeof r->text);
     memcpy(r->text, d->text, strlen(d->text));
     memset(r->reserved, 0, sizeof r->reserved);
-    MemoryBarrier();
+    jtty_shm_barrier();
     shm->results_written++;
     if (c->verbose)
         fprintf(stderr, "decode id=%lld at %lld %.1f Hz%s: %s\n", (long long)d->message_id,
@@ -51,7 +50,7 @@ static void handle_tx(Ctx *c)
     shm->tx_response.nframes = nf;
     memset(shm->tx_response.text, 0, sizeof shm->tx_response.text);
     memcpy(shm->tx_response.text, canonical, strlen(canonical));
-    MemoryBarrier();
+    jtty_shm_barrier();
     shm->tx_response.seq_done = seq;
     jtty_shm_signal_tx(c->s);
     if (c->verbose)

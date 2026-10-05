@@ -1,6 +1,7 @@
 /* jtty-sidecar - Windows shared memory + event plumbing for the server side.
+ * (The POSIX equivalent is shm_posix.c; the interface is shm.h.)
  * Copyright (C) 2026 Station Master Group. GPLv3, see LICENSE. */
-#include "shm_win.h"
+#include "shm.h"
 
 #include <windows.h>
 #include <stdio.h>
@@ -18,6 +19,8 @@ static HANDLE make_event(const char *name, const char *suffix)
 int jtty_shm_create(JttyShmServer *s, const char *name)
 {
     memset(s, 0, sizeof *s);
+    s->fd = -1;
+    snprintf(s->name, sizeof s->name, "%s", name);
     HANDLE m = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE,
                                   0, (DWORD)sizeof(JttyShm), name);
     if (!m) { fprintf(stderr, "CreateFileMapping failed: %lu\n", GetLastError()); return -1; }
@@ -70,6 +73,8 @@ int jtty_shm_wait_rx(JttyShmServer *s, int ms)
 
 void jtty_shm_signal_results(JttyShmServer *s) { SetEvent(s->res_event); }
 void jtty_shm_signal_tx(JttyShmServer *s) { SetEvent(s->tx_event); }
+
+void jtty_shm_barrier(void) { MemoryBarrier(); }
 
 int jtty_process_gone(int pid)
 {

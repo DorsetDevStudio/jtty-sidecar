@@ -124,10 +124,11 @@ if ($LASTEXITCODE -ne 0) { Fail "push of $tag failed" }
 # Created here, now, so the signed files are the first thing on the release page; the Actions build
 # for this tag adds the zip and SHA256SUMS.txt to the same release when it finishes.
 Write-Host "--- creating the GitHub release" -ForegroundColor Cyan
-$notes = "jtty-sidecar $tag for Windows x64.`n`n" +
+$notes = "jtty-sidecar $tag for Windows x64, macOS (universal) and Linux (x86_64, aarch64).`n`n" +
          "jtty-sidecar.exe is Authenticode-signed by the publisher; jtty-sidecar.exe.sha256 is its SHA-256. " +
-         "The zip (added by the build workflow) holds the same program built from this tag on GitHub Actions, " +
-         "unsigned, with README.md, LICENSE and UPSTREAM.md. GPLv3."
+         "The build workflow adds the macOS and Linux executables (each with a .sha256), a zip per platform " +
+         "with the reference client, README.md, LICENSE and UPSTREAM.md, and SHA256SUMS.txt, all built from " +
+         "this tag on GitHub Actions. GPLv3."
 & $ghExe release create $tag "dist\jtty-sidecar.exe" "dist\jtty-sidecar.exe.sha256" --title "jtty-sidecar $tag" --notes $notes
 if ($LASTEXITCODE -ne 0) { Fail "release creation failed; the tag is pushed - create the release by hand or re-run: gh release create $tag dist\jtty-sidecar.exe dist\jtty-sidecar.exe.sha256" }
 

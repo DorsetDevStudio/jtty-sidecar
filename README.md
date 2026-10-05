@@ -32,25 +32,38 @@ the same licence as the upstream code it contains.
   into the segment, publishes results into it, and renders transmit audio on
   request. See **Shared-memory protocol** below and `src/protocol.h`.
 
-Only Windows x64 is built at the moment. Nothing in the code is Windows
-specific apart from `src/shm_win.c`; other platforms can follow once the
-upstream mode is released.
+Built for:
+
+* **Windows x64** - also runs on Windows on ARM under its x64 emulation
+* **macOS** - one universal binary, Apple Silicon and Intel, macOS 12 or newer
+* **Linux x86_64 and aarch64** (64-bit Raspberry Pi OS and other arm64
+  boards) - glibc 2.35 or newer: Ubuntu 22.04, Debian 12 bookworm and later
+
+Everything is the same code apart from the shared-memory layer:
+`src/shm_win.c` on Windows, `src/shm_posix.c` on macOS and Linux, behind
+`src/shm.h`. The segment's bytes are identical on every platform.
 
 ## Downloads
 
-Every push is built by GitHub Actions on Windows x64 with the same MSYS2 toolchain
-as compile.bat, and the self tests must pass. A tag `vX.Y.Z` publishes a release:
+Every push is built by GitHub Actions on every platform, and the self tests
+must pass on each (the macOS slices are tested on their own architecture, then
+joined). A tag `vX.Y.Z` publishes a release. Each platform has a bare executable
+plus its SHA-256 (bare hex, for a program that fetches just the engine) and a
+zip with the reference client, README.md, LICENSE and UPSTREAM.md:
 
-* `jtty-sidecar-win64.zip` - always the newest release, at
-  `https://github.com/DorsetDevStudio/jtty-sidecar/releases/latest/download/jtty-sidecar-win64.zip`
-* `jtty-sidecar-X.Y.Z-win64.zip` - that version, kept
-* `jtty-sidecar.exe` and `jtty-sidecar.exe.sha256` - the bare executable,
-  Authenticode-signed by the publisher, and its SHA-256, for a program that
-  fetches just the engine (uploaded by deploy.bat from the publisher's machine)
-* `SHA256SUMS.txt` - checksums of the zips
+| Platform | Executable | Zip |
+|---|---|---|
+| Windows x64 | `jtty-sidecar.exe` (Authenticode-signed, uploaded by deploy.bat) | `jtty-sidecar-win64.zip` |
+| macOS universal | `jtty-sidecar-macos-universal` (ad hoc signed) | `jtty-sidecar-macos.zip` |
+| Linux x86_64 | `jtty-sidecar-linux-x86_64` | `jtty-sidecar-linux-x86_64.zip` |
+| Linux aarch64 | `jtty-sidecar-linux-aarch64` | `jtty-sidecar-linux-aarch64.zip` |
 
-The zip holds `jtty-sidecar.exe`, `jtty-shm-client.exe`, README.md, LICENSE and
-UPSTREAM.md. Nothing to install; no DLLs needed.
+The newest release is always at
+`https://github.com/DorsetDevStudio/jtty-sidecar/releases/latest/download/<file>`,
+the SHA-256 at `<file>.sha256`, and `SHA256SUMS.txt` lists every file. Nothing to
+install. The Windows program needs no DLLs; the macOS and Linux programs need
+only the system C library (the Fortran runtime and FFTW are linked in). On
+macOS and Linux a downloaded program must be made executable (`chmod +x`).
 
 ## Releasing
 
@@ -68,6 +81,20 @@ creates the GitHub Release with the signed exe and its SHA-256 (GitHub CLI,
 committed.
 
 ## Building
+
+### macOS and Linux
+
+    # macOS:  brew install gcc fftw cmake ninja
+    # Debian: sudo apt install gfortran build-essential libfftw3-dev cmake ninja-build
+    ./compile.sh                 builds dist/jtty-sidecar and dist/jtty-shm-client for this machine
+    ./compile.sh --universal     macOS: both architectures joined with lipo (needs Homebrew gcc
+                                 and fftw under /opt/homebrew AND /usr/local)
+    ./run-tests.sh               the same self tests as run-tests.bat
+
+gfortran builds one architecture at a time, which is why the universal binary
+is two builds joined afterwards. The macOS deployment target is 12.0 for both.
+
+### Windows
 
 Prerequisites: [MSYS2](https://www.msys2.org) at `C:\msys64`, plus CMake and
 Ninja on the PATH (or installed into MSYS2).
@@ -87,10 +114,15 @@ detects this and places the correct DLL beside the compiler back ends.
 
 The contract is `src/protocol.h`; this is the summary.
 
-The server creates one Windows file mapping named `<name>` holding a single
-`JttyShm` structure, and three auto-reset events `<name>.rx`, `<name>.res`
-and `<name>.tx`. A client opens them, checks `magic`, `version` and
-`struct_size`, and then:
+The server creates one shared-memory segment named `<name>` holding a single
+`JttyShm` structure, and three wake-up objects `<name>.rx`, `<name>.res` and
+`<name>.tx`. On Windows those are a file mapping and three auto-reset events.
+On macOS and Linux they are a POSIX shared-memory object `/<name>` and three
+named semaphores `/<name>.rx` etc., each kept at a count of at most one so it
+behaves like an auto-reset event; `<name>` is at most 25 characters there
+(macOS's limit), and macOS has no `sem_timedwait`, so a timed wait polls. The
+reference client `tests/shm_client.c` shows both. A client opens them, checks
+`magic`, `version` and `struct_size`, and then:
 
 * **Receive.** Writes 12 kHz mono int16 audio into the ring
   `rx_pcm[rx_written % JTTY_RX_RING_SAMPLES]`, advances `rx_written` after

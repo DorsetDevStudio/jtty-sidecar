@@ -1,15 +1,26 @@
 name: build
 
-# Builds jtty-sidecar on Windows x64 with the MSYS2 mingw64 toolchain (the
-# same one compile.bat uses), runs the self tests, and keeps the binaries as a
-# workflow artifact. A tag of the form v1.2.3 also adds the zip and SHA256SUMS.txt
-# to that tag's GitHub Release. The release itself, with the signed bare
-# executable and its SHA-256, is created by deploy.ps1 on the publisher's
-# machine (the signing key is on a hardware token there), so this job only
-# ever ADDS to it. Stable URLs:
-#   https://github.com/<owner>/jtty-sidecar/releases/latest/download/jtty-sidecar-win64.zip
-#   https://github.com/<owner>/jtty-sidecar/releases/latest/download/jtty-sidecar.exe        (signed, from deploy)
-#   https://github.com/<owner>/jtty-sidecar/releases/latest/download/jtty-sidecar.exe.sha256
+# Builds jtty-sidecar for every platform it ships on, runs the self tests on
+# each, and keeps the binaries as workflow artifacts. A tag of the form v1.2.3
+# also adds every platform's files to that tag's GitHub Release.
+#
+# The release itself is created by deploy.ps1 on the publisher's machine
+# (before the tag is pushed, so it exists by the time these jobs finish) with
+# the Authenticode-SIGNED Windows executable and its SHA-256; this workflow
+# only ever ADDS to it. Stable URLs, all under
+#   https://github.com/<owner>/jtty-sidecar/releases/latest/download/
+#     jtty-sidecar.exe                 Windows x64, signed (from deploy)   + .sha256
+#     jtty-sidecar-macos-universal     macOS arm64 + x86_64 in one file   + .sha256
+#     jtty-sidecar-linux-x86_64        Linux, glibc 2.35+                 + .sha256
+#     jtty-sidecar-linux-aarch64       Linux arm64 (Raspberry Pi 4/5 64-bit) + .sha256
+#     jtty-sidecar-win64.zip, jtty-sidecar-macos.zip, jtty-sidecar-linux-x86_64.zip,
+#     jtty-sidecar-linux-aarch64.zip   the same programs with the reference client,
+#                                      README, LICENSE and UPSTREAM.md
+#     SHA256SUMS.txt                   checksums of all of the above
+#
+# Windows ARM is not built: the x64 executable runs under Windows' x64
+# emulation there. macOS is a universal binary because gfortran builds one
+# architecture at a time: two jobs build the slices, a third joins them.
 
 on:
   push:
@@ -22,6 +33,7 @@ permissions:
   contents: write     # needed only by the release step
 
 jobs:
+  # --------------------------------------------------------------------------
   windows-x64:
     runs-on: windows-latest
     defaults:
@@ -60,36 +72,182 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $v = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF.Substring(11) } else { 'dev-' + $env:GITHUB_SHA.Substring(0,7) }
           Copy-Item README.md, LICENSE dist/
           Copy-Item upstream/UPSTREAM.md dist/
           Compress-Archive -Path dist/* -DestinationPath "jtty-sidecar-win64.zip" -Force
-          Copy-Item jtty-sidecar-win64.zip "jtty-sidecar-$v-win64.zip"
-          $sums = @()
-          foreach ($f in "jtty-sidecar-win64.zip", "jtty-sidecar-$v-win64.zip") {
-            $h = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
-            $sums += "$h  $f"
-          }
-          $sums | Out-File -Encoding ascii SHA256SUMS.txt
-          Get-Content SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
         with:
           name: jtty-sidecar-win64
-          path: |
-            jtty-sidecar-*.zip
-            SHA256SUMS.txt
+          path: jtty-sidecar-win64.zip
 
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  # --------------------------------------------------------------------------
+  # macOS: one slice per architecture. Each job builds and tests natively, then
+  # hands its two executables to the universal job below.
+  macos-slice:
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          brew install gcc fftw cmake ninja
+          ls "$(brew --prefix)"/bin/gfortran-*
+
+      - name: Build
+        run: bash compile.sh
+
+      - name: Self tests
+        run: bash run-tests.sh
+
+      - name: Check the slice
+        run: |
+          lipo -info dist/jtty-sidecar
+          otool -L dist/jtty-sidecar
+          vtool -show-build dist/jtty-sidecar | grep -E 'minos|platform' || otool -l dist/jtty-sidecar | grep -A3 LC_BUILD_VERSION
+          # Only system libraries may be referenced: a user's Mac has no Homebrew gcc or FFTW.
+          if otool -L dist/jtty-sidecar | tail -n +2 | grep -vE '^[[:space:]]*/usr/lib/|^[[:space:]]*/System/'; then
+            echo "::error::jtty-sidecar links a non-system library (above)"; exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
         with:
-          files: |
-            jtty-sidecar-win64.zip
-            jtty-sidecar-*-win64.zip
-            SHA256SUMS.txt
-          # the release and its notes come from deploy.ps1; this only adds the zip
+          name: macos-slice-${{ matrix.arch }}
+          path: |
+            dist/jtty-sidecar
+            dist/jtty-shm-client
+
+  macos-universal:
+    needs: macos-slice
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-slice-arm64
+          path: slice-arm64
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-slice-x86_64
+          path: slice-x86_64
+
+      - name: Join the slices
+        run: |
+          mkdir -p dist
+          lipo -create slice-arm64/jtty-sidecar slice-x86_64/jtty-sidecar -output dist/jtty-sidecar
+          lipo -create slice-arm64/jtty-shm-client slice-x86_64/jtty-shm-client -output dist/jtty-shm-client
+          chmod +x dist/jtty-sidecar dist/jtty-shm-client
+          # Apple Silicon refuses to run an executable with no signature at all; an ad hoc one is enough.
+          codesign --force --sign - dist/jtty-sidecar dist/jtty-shm-client
+          lipo -info dist/jtty-sidecar
+          dist/jtty-sidecar version
+          arch -x86_64 dist/jtty-sidecar version || echo "(no Rosetta on this runner; the x86_64 slice was tested on its own runner)"
+
+      - name: Self tests (universal binary, native slice)
+        run: bash run-tests.sh
+
+      - name: Package
+        run: |
+          cp dist/jtty-sidecar jtty-sidecar-macos-universal
+          shasum -a 256 jtty-sidecar-macos-universal | cut -d' ' -f1 | tr -d '\n' > jtty-sidecar-macos-universal.sha256
+          cp README.md LICENSE upstream/UPSTREAM.md dist/
+          (cd dist && zip -q ../jtty-sidecar-macos.zip jtty-sidecar jtty-shm-client README.md LICENSE UPSTREAM.md)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jtty-sidecar-macos
+          path: |
+            jtty-sidecar-macos-universal
+            jtty-sidecar-macos-universal.sha256
+            jtty-sidecar-macos.zip
+
+  # --------------------------------------------------------------------------
+  # Linux: built on the OLDEST Ubuntu GitHub still offers so the glibc the
+  # binary wants (2.35) is older than what Debian bookworm (2.36, Raspberry
+  # Pi OS) and every current Ubuntu ship. libgfortran, libquadmath and FFTW
+  # are linked statically; only the C library is dynamic.
+  linux:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran build-essential libfftw3-dev cmake ninja-build
+
+      - name: Build
+        run: bash compile.sh
+
+      - name: Self tests
+        run: bash run-tests.sh
+
+      - name: Check the binary
+        run: |
+          file dist/jtty-sidecar
+          ldd dist/jtty-sidecar
+          # Nothing but the C library family may be dynamic: a user's machine has no gfortran.
+          ! ldd dist/jtty-sidecar | grep -E 'libgfortran|libquadmath|libfftw'
+
+      - name: Package
+        run: |
+          cp dist/jtty-sidecar jtty-sidecar-linux-${{ matrix.arch }}
+          sha256sum jtty-sidecar-linux-${{ matrix.arch }} | cut -d' ' -f1 | tr -d '\n' > jtty-sidecar-linux-${{ matrix.arch }}.sha256
+          cp README.md LICENSE upstream/UPSTREAM.md dist/
+          (cd dist && zip -q ../jtty-sidecar-linux-${{ matrix.arch }}.zip jtty-sidecar jtty-shm-client README.md LICENSE UPSTREAM.md)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jtty-sidecar-linux-${{ matrix.arch }}
+          path: |
+            jtty-sidecar-linux-${{ matrix.arch }}
+            jtty-sidecar-linux-${{ matrix.arch }}.sha256
+            jtty-sidecar-linux-${{ matrix.arch }}.zip
+
+  # --------------------------------------------------------------------------
+  # On a version tag: gather every platform and add it to the release that
+  # deploy.ps1 created. The signed Windows exe is already there.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ windows-x64, macos-universal, linux ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jtty-sidecar-*
+          merge-multiple: true
+          path: out
+
+      - name: Checksums
+        run: |
+          cd out
+          v="${GITHUB_REF#refs/tags/v}"
+          cp jtty-sidecar-win64.zip "jtty-sidecar-$v-win64.zip"
+          sha256sum jtty-sidecar-* | grep -v '\.sha256$' > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          ls -l
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          # the release and its notes come from deploy.ps1; this only adds files
           append_body: true
           body: |
 
-            Source-built zip and SHA256SUMS.txt added by GitHub Actions from this tag.
+            macOS (universal), Linux (x86_64, aarch64) and the source-built Windows zip added by GitHub Actions from this tag.

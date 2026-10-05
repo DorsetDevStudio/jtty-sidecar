@@ -1,16 +1,29 @@
 /* jtty-sidecar - the shared-memory interface between the server and a client.
  *
  * This header IS the public contract: anyone may implement a client from it.
- * One Windows file mapping named <name> holds a single JttyShm. Three named
- * auto-reset events signal changes:
+ * One shared-memory segment named <name> holds a single JttyShm. Three named
+ * wake-up objects signal changes:
  *     <name>.rx    client -> server : new receive audio in rx_pcm
  *     <name>.res   server -> client : new entries in results[]
  *     <name>.tx    server -> client : tx_response updated
- * The server creates all four objects; the client opens them. All multi-byte
- * fields are little-endian native; int64 fields are 8-byte aligned; the
- * layout is fixed by the static asserts at the bottom and never changes
- * within a protocol version. A client checks magic, version and struct_size
- * before touching anything else.
+ * The server creates all four objects; the client opens them.
+ *
+ * On Windows the segment is a file mapping named <name> and the wake-ups are
+ * auto-reset events named <name>.rx / <name>.res / <name>.tx.
+ * On macOS and Linux the segment is a POSIX shared-memory object (shm_open)
+ * named "/<name>" and the wake-ups are named semaphores "/<name>.rx",
+ * "/<name>.res" and "/<name>.tx", each held at a count of at most one by the
+ * signaller (drain, then post) so it behaves like an auto-reset event. macOS
+ * limits these names to 31 characters including the slash, so <name> is at
+ * most 25 characters, and macOS has no sem_timedwait: a client that waits
+ * with a timeout there polls sem_trywait. A client may also ignore the
+ * wake-ups entirely and poll the counters; the server polls at 100 ms anyway.
+ *
+ * All multi-byte fields are little-endian native (every platform built is
+ * little-endian); int64 fields are 8-byte aligned; the layout is fixed by the
+ * static asserts at the bottom and never changes within a protocol version.
+ * A client checks magic, version and struct_size before touching anything
+ * else. The same binary layout is used on every platform and architecture.
  *
  * Receive path: the client writes 12 kHz mono int16 audio into the ring
  * rx_pcm[rx_written % JTTY_RX_RING_SAMPLES], advances rx_written (total

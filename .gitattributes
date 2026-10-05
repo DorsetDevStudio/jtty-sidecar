@@ -2,5 +2,6 @@
 # the batch files only (cmd needs them), everything else as the platform prefers.
 * text=auto
 *.bat text eol=crlf
+*.sh text eol=lf
 *.png binary
 *.wav binary
