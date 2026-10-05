@@ -49,6 +49,18 @@ as compile.bat, and the self tests must pass. A tag `vX.Y.Z` publishes a release
 The zip holds `jtty-sidecar.exe`, `jtty-shm-client.exe`, README.md, LICENSE and
 UPSTREAM.md. Nothing to install; no DLLs needed.
 
+## Releasing
+
+    deploy.bat            next patch version (0.1.0 -> 0.1.1)
+    deploy.bat minor      next minor version
+    deploy.bat major      next major version
+    deploy.bat 1.4.2      exactly that version
+
+deploy.bat bumps the version in CMakeLists.txt, builds, runs the self tests,
+commits everything as "Release vX.Y.Z", tags, and pushes main and the tag.
+GitHub Actions then builds the tag and publishes the release (see Downloads).
+A build or test failure stops it before anything is committed.
+
 ## Building
 
 Prerequisites: [MSYS2](https://www.msys2.org) at `C:\msys64`, plus CMake and
