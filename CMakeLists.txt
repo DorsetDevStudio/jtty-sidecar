@@ -1,5 +1,5 @@
 cmake_minimum_required (VERSION 3.20)
-project (jtty_sidecar VERSION 0.1.0 LANGUAGES C Fortran)
+project (jtty_sidecar VERSION 0.1.1 LANGUAGES C Fortran)
 
 # The upstream drop this build wraps. Keep in step with upstream/UPSTREAM.md.
 set (JTTY_UPSTREAM_LABEL "WSJT-X 3.2.0-rc1 lib/jtty (= WS 3.2.1)" CACHE STRING "Upstream version label baked into --version")
