@@ -51,6 +51,12 @@ if (-not $gh) {
 $ghExe = $gh.Source
 if ($null -eq $ghExe) { $ghExe = $gh.FullName }
 & $ghExe auth status 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0 -and $env:GH_TOKEN) {
+    # A GH_TOKEN in the environment overrides the stored login; if it is stale, ignore it for this run.
+    Write-Host "GH_TOKEN in the environment was rejected; using the GitHub CLI's stored login instead."
+    $env:GH_TOKEN = $null
+    & $ghExe auth status 2>&1 | Out-Null
+}
 if ($LASTEXITCODE -ne 0) { Fail "GitHub CLI is not logged in: run  gh auth login" }
 
 $branch = (git rev-parse --abbrev-ref HEAD).Trim()
