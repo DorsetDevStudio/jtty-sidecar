@@ -1,0 +1,87 @@
+name: build
+
+# Builds jtty-sidecar on Windows x64 with the MSYS2 mingw64 toolchain (the
+# same one compile.bat uses), runs the self tests, and keeps the binaries as a
+# workflow artifact. A tag of the form v1.2.3 also publishes a GitHub Release
+# carrying the zip and its SHA-256, so the download URL
+#   https://github.com/<owner>/jtty-sidecar/releases/latest/download/jtty-sidecar-win64.zip
+# always points at the newest release.
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write     # needed only by the release step
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-gcc-fortran
+            mingw-w64-x86_64-fftw
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Stage dist
+        run: |
+          mkdir -p dist
+          cp build/jtty-sidecar.exe build/jtty-shm-client.exe dist/
+          dist/jtty-sidecar.exe version
+
+      - name: Self tests
+        shell: cmd
+        run: run-tests.bat
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF.Substring(11) } else { 'dev-' + $env:GITHUB_SHA.Substring(0,7) }
+          Copy-Item README.md, LICENSE dist/
+          Copy-Item upstream/UPSTREAM.md dist/
+          Compress-Archive -Path dist/* -DestinationPath "jtty-sidecar-win64.zip" -Force
+          Copy-Item jtty-sidecar-win64.zip "jtty-sidecar-$v-win64.zip"
+          (Get-FileHash jtty-sidecar-win64.zip -Algorithm SHA256).Hash.ToLower() + "  jtty-sidecar-win64.zip" | Out-File -Encoding ascii SHA256SUMS.txt
+          (Get-FileHash "jtty-sidecar-$v-win64.zip" -Algorithm SHA256).Hash.ToLower() + "  jtty-sidecar-$v-win64.zip" | Out-File -Encoding ascii -Append SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jtty-sidecar-win64
+          path: |
+            jtty-sidecar-*.zip
+            SHA256SUMS.txt
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            jtty-sidecar-win64.zip
+            jtty-sidecar-*-win64.zip
+            SHA256SUMS.txt
+          body: |
+            jtty-sidecar ${{ github.ref_name }} for Windows x64, built from this tag by GitHub Actions.
+
+            Unzip and run `jtty-sidecar.exe version`. See README.md for the command line and the
+            shared-memory protocol. GPLv3; the vendored upstream sources are listed in UPSTREAM.md.

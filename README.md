@@ -36,6 +36,19 @@ Only Windows x64 is built at the moment. Nothing in the code is Windows
 specific apart from `src/shm_win.c`; other platforms can follow once the
 upstream mode is released.
 
+## Downloads
+
+Every push is built by GitHub Actions on Windows x64 with the same MSYS2 toolchain
+as compile.bat, and the self tests must pass. A tag `vX.Y.Z` publishes a release:
+
+* `jtty-sidecar-win64.zip` - always the newest release, at
+  `https://github.com/DorsetDevStudio/jtty-sidecar/releases/latest/download/jtty-sidecar-win64.zip`
+* `jtty-sidecar-X.Y.Z-win64.zip` - that version, kept
+* `SHA256SUMS.txt` - checksums of both
+
+The zip holds `jtty-sidecar.exe`, `jtty-shm-client.exe`, README.md, LICENSE and
+UPSTREAM.md. Nothing to install; no DLLs needed.
+
 ## Building
 
 Prerequisites: [MSYS2](https://www.msys2.org) at `C:\msys64`, plus CMake and
