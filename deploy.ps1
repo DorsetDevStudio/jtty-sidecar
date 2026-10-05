@@ -71,12 +71,13 @@ $m = [regex]::Match($cmake, 'project \(jtty_sidecar VERSION (\d+)\.(\d+)\.(\d+)'
 if (-not $m.Success) { Fail "could not find the version in CMakeLists.txt" }
 $cur = [int[]]@($m.Groups[1].Value, $m.Groups[2].Value, $m.Groups[3].Value)
 switch -Regex ($Bump) {
-    '^patch$'            { $new = @($cur[0], $cur[1], $cur[2] + 1) }
-    '^minor$'            { $new = @($cur[0], $cur[1] + 1, 0) }
-    '^major$'            { $new = @($cur[0] + 1, 0, 0) }
+    '^patch$'            { $new = @($cur[0], $cur[1], ($cur[2] + 1)) }
+    '^minor$'            { $new = @($cur[0], ($cur[1] + 1), 0) }
+    '^major$'            { $new = @(($cur[0] + 1), 0, 0) }
     '^\d+\.\d+\.\d+$'    { $new = [int[]]($Bump -split '\.') }
     default              { Fail "'$Bump' is not patch, minor, major or X.Y.Z" }
 }
+if ($new.Count -ne 3) { Fail "version arithmetic produced '$($new -join '.')'" }   # the comma binds before + in PowerShell
 $version = "$($new[0]).$($new[1]).$($new[2])"
 $tag = "v$version"
 if (git tag -l $tag) { Fail "tag $tag already exists" }
