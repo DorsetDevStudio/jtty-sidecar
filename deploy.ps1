@@ -8,20 +8,51 @@
 # What it does, stopping at the first failure:
 #   1. bumps the version in CMakeLists.txt
 #   2. compile.bat, then run-tests.bat - a release that does not build and pass is never tagged
-#   3. commits everything in the working tree as "Release vX.Y.Z"
-#   4. tags vX.Y.Z and pushes main and the tag
-# GitHub Actions then builds the tagged source and publishes the release zip
-# (see .github/workflows/build.yml and the Downloads section of README.md).
+#   3. Authenticode-signs dist\jtty-sidecar.exe with the publisher's certificate (signtool; the
+#      hardware token asks for its password) and writes its SHA-256
+#   4. commits everything in the working tree as "Release vX.Y.Z", tags vX.Y.Z, pushes main and the tag
+#   5. creates the GitHub Release for the tag and uploads the SIGNED jtty-sidecar.exe and
+#      jtty-sidecar.exe.sha256 - the two files a program fetching just the engine downloads
+# GitHub Actions then builds the same tag and adds the source-built zip and SHA256SUMS.txt to that
+# release (.github/workflows/build.yml). The zip is unsigned; the bare exe is the signed one.
+#
+# Needs: the MSYS2 toolchain (setup-toolchain.bat), signtool from the Windows SDK with the
+# publisher's certificate available to it, and the GitHub CLI logged in (gh auth login).
 
 param([string]$Bump = "patch")
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
+# Signing: the certificate is picked by subject name, so nothing secret lives in this script.
+$SignSubject   = "STATION MASTER GROUP LTD"
+$TimestampUrl  = "http://timestamp.digicert.com"
+
 function Fail($msg) { Write-Host ""; Write-Host "DEPLOY STOPPED: $msg" -ForegroundColor Red; exit 1 }
 
-# --- repository sanity ---------------------------------------------------------
+function Find-SignTool {
+    $kits = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+    if (-not (Test-Path $kits)) { return $null }
+    Get-ChildItem $kits -Directory | Where-Object { $_.Name -match '^\d+\.' } |
+        Sort-Object { [version]$_.Name } -Descending |
+        ForEach-Object { Join-Path $_.FullName "x64\signtool.exe" } |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+
+# --- prerequisites ------------------------------------------------------------
 if (-not (Test-Path .git)) { Fail "not a git repository" }
+$signtool = Find-SignTool
+if (-not $signtool) { Fail "signtool.exe not found under the Windows Kits folder; install the Windows SDK" }
+$gh = Get-Command gh -ErrorAction SilentlyContinue
+if (-not $gh) {
+    $ghPath = "$env:ProgramFiles\GitHub CLI\gh.exe"
+    if (Test-Path $ghPath) { $gh = Get-Item $ghPath } else { Fail "GitHub CLI not found: winget install GitHub.cli, then gh auth login" }
+}
+$ghExe = $gh.Source
+if ($null -eq $ghExe) { $ghExe = $gh.FullName }
+& $ghExe auth status 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { Fail "GitHub CLI is not logged in: run  gh auth login" }
+
 $branch = (git rev-parse --abbrev-ref HEAD).Trim()
 if ($branch -ne "main") { Fail "on branch '$branch'; releases are cut from main" }
 git fetch origin --tags --quiet
@@ -56,6 +87,16 @@ Write-Host "--- run-tests.bat" -ForegroundColor Cyan
 cmd /c run-tests.bat
 if ($LASTEXITCODE -ne 0) { git checkout -- CMakeLists.txt; Fail "tests failed (version bump reverted)" }
 
+# --- sign ---------------------------------------------------------------------
+Write-Host "--- signing dist\jtty-sidecar.exe (the token will ask for its password)" -ForegroundColor Cyan
+& $signtool sign /n $SignSubject /fd sha256 /td sha256 /tr $TimestampUrl /a "dist\jtty-sidecar.exe"
+if ($LASTEXITCODE -ne 0) { git checkout -- CMakeLists.txt; Fail "signing failed (version bump reverted)" }
+& $signtool verify /pa /q "dist\jtty-sidecar.exe"
+if ($LASTEXITCODE -ne 0) { git checkout -- CMakeLists.txt; Fail "the signature did not verify (version bump reverted)" }
+$sha = (Get-FileHash "dist\jtty-sidecar.exe" -Algorithm SHA256).Hash.ToLower()
+[IO.File]::WriteAllText("$PSScriptRoot\dist\jtty-sidecar.exe.sha256", $sha)   # bare hex, no newline
+Write-Host "signed, sha256 $sha"
+
 # --- commit, tag, push --------------------------------------------------------
 git add -A
 git diff --cached --quiet
@@ -72,9 +113,20 @@ if ($LASTEXITCODE -ne 0) { Fail "push of main failed (the tag was created locall
 git push origin $tag
 if ($LASTEXITCODE -ne 0) { Fail "push of $tag failed" }
 
+# --- release with the signed engine ------------------------------------------
+# Created here, now, so the signed files are the first thing on the release page; the Actions build
+# for this tag adds the zip and SHA256SUMS.txt to the same release when it finishes.
+Write-Host "--- creating the GitHub release" -ForegroundColor Cyan
+$notes = "jtty-sidecar $tag for Windows x64.`n`n" +
+         "jtty-sidecar.exe is Authenticode-signed by the publisher; jtty-sidecar.exe.sha256 is its SHA-256. " +
+         "The zip (added by the build workflow) holds the same program built from this tag on GitHub Actions, " +
+         "unsigned, with README.md, LICENSE and UPSTREAM.md. GPLv3."
+& $ghExe release create $tag "dist\jtty-sidecar.exe" "dist\jtty-sidecar.exe.sha256" --title "jtty-sidecar $tag" --notes $notes
+if ($LASTEXITCODE -ne 0) { Fail "release creation failed; the tag is pushed - create the release by hand or re-run: gh release create $tag dist\jtty-sidecar.exe dist\jtty-sidecar.exe.sha256" }
+
 $remote = (git remote get-url origin).Trim() -replace '^git@github\.com:', 'https://github.com/' -replace '\.git$', ''
 Write-Host ""
 Write-Host "Released $tag." -ForegroundColor Green
-Write-Host "Build and release progress: $remote/actions"
-Write-Host "Release page when done:     $remote/releases/tag/$tag"
-Write-Host "Latest download URL:        $remote/releases/latest/download/jtty-sidecar-win64.zip"
+Write-Host "Build progress (adds the zip): $remote/actions"
+Write-Host "Release page:                  $remote/releases/tag/$tag"
+Write-Host "Engine download URL:           $remote/releases/latest/download/jtty-sidecar.exe"

@@ -44,9 +44,10 @@ as compile.bat, and the self tests must pass. A tag `vX.Y.Z` publishes a release
 * `jtty-sidecar-win64.zip` - always the newest release, at
   `https://github.com/DorsetDevStudio/jtty-sidecar/releases/latest/download/jtty-sidecar-win64.zip`
 * `jtty-sidecar-X.Y.Z-win64.zip` - that version, kept
-* `jtty-sidecar.exe` and `jtty-sidecar.exe.sha256` - the bare executable and its
-  SHA-256, for a program that fetches just the engine
-* `SHA256SUMS.txt` - checksums of all of them
+* `jtty-sidecar.exe` and `jtty-sidecar.exe.sha256` - the bare executable,
+  Authenticode-signed by the publisher, and its SHA-256, for a program that
+  fetches just the engine (uploaded by deploy.bat from the publisher's machine)
+* `SHA256SUMS.txt` - checksums of the zips
 
 The zip holds `jtty-sidecar.exe`, `jtty-shm-client.exe`, README.md, LICENSE and
 UPSTREAM.md. Nothing to install; no DLLs needed.
@@ -59,9 +60,12 @@ UPSTREAM.md. Nothing to install; no DLLs needed.
     deploy.bat 1.4.2      exactly that version
 
 deploy.bat bumps the version in CMakeLists.txt, builds, runs the self tests,
-commits everything as "Release vX.Y.Z", tags, and pushes main and the tag.
-GitHub Actions then builds the tag and publishes the release (see Downloads).
-A build or test failure stops it before anything is committed.
+signs the executable (signtool, publisher certificate on a hardware token),
+commits everything as "Release vX.Y.Z", tags, pushes main and the tag, and
+creates the GitHub Release with the signed exe and its SHA-256 (GitHub CLI,
+`gh auth login` once). GitHub Actions then builds the tag and adds the zip
+(see Downloads). A build, test or signing failure stops it before anything is
+committed.
 
 ## Building
 
