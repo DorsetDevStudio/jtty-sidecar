@@ -13,8 +13,12 @@ C=$D/jtty-shm-client
 FAILED=0
 mkdir -p build
 
-echo "--- loopback, clean"
+echo "--- loopback, clean (and timed: a decoder start of many seconds is a broken FFTW, see compile.sh)"
+start=$SECONDS
 $X loopback "CQ G5STU CQ" || FAILED=1
+took=$((SECONDS - start))
+echo "first decode took ${took} s"
+if [ $took -gt 5 ]; then echo "FAIL: the first decode took ${took} s (expected under 1 s)"; FAILED=1; fi
 echo "--- loopback, two frames"
 $X loopback "WB9XYZ 599 123" || FAILED=1
 echo "--- loopback, -12 dB, RTTY Roundup profile"
@@ -31,6 +35,9 @@ name="jtty-selftest-$$"
 $X serve "$name" &
 server=$!
 $C "$name" "CQ TEST G5STU IO91" || FAILED=1
+# The client tells the server to quit when it finishes; a client that failed early never did.
+sleep 1
+kill $server 2>/dev/null || true
 wait $server 2>/dev/null || true
 
 echo

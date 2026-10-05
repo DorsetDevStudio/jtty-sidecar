@@ -31,8 +31,10 @@ int jtty_shm_create(JttyShmServer *s, const char *name)
     }
     JttyShm *p = MapViewOfFile(m, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(JttyShm));
     if (!p) { fprintf(stderr, "MapViewOfFile failed: %lu\n", GetLastError()); CloseHandle(m); return -1; }
+    /* A client may open the segment the moment it exists, so the header is written with the
+     * magic LAST: whoever sees the right magic sees a complete header, and a zero magic means
+     * "not ready yet", never "wrong protocol" (protocol.h says so to client authors). */
     memset(p, 0, sizeof *p);
-    p->magic = JTTY_SHM_MAGIC;
     p->version = JTTY_SHM_VERSION;
     p->struct_size = (uint32_t)sizeof(JttyShm);
     p->header_size = JTTY_SHM_HEADER_SIZE;
@@ -42,6 +44,8 @@ int jtty_shm_create(JttyShmServer *s, const char *name)
     p->nfb = 3000;
     p->f0 = 1500.0f;
     p->ftol = 500.0f;
+    jtty_shm_barrier();
+    p->magic = JTTY_SHM_MAGIC;
 
     s->mapping = m;
     s->shm = p;

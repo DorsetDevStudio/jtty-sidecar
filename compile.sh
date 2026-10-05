@@ -40,6 +40,28 @@ brew_compilers() {
     [ -x "$cc" ] || return 1
 }
 
+# Linux on ARM: FFTW is built from source, because the distributions' packages make the decoder's
+# first FFT plans take about half a minute. Measured 2026-10-05 on a Raspberry Pi 5, same engine,
+# first decode: Debian bookworm's libfftw3f 33.5 s, Ubuntu 22.04's 33.5 s, FFTW 3.3.10 built here
+# 0.47 s. (The upstream decoder plans with FFTW_MEASURE; x86 and macOS packages are unaffected.)
+# Prints the install prefix; everything else goes to build-fftw/*.log.
+FFTW_VERSION=3.3.10
+FFTW_SHA256=56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467
+fftw_from_source() {
+    local top=$PWD/build-fftw prefix=$PWD/build-fftw/prefix
+    if [ -f "$prefix/lib/libfftw3f.a" ]; then echo "$prefix"; return; fi
+    mkdir -p "$top"
+    local tarball=$top/fftw-$FFTW_VERSION.tar.gz
+    [ -f "$tarball" ] || curl -fsSL -o "$tarball" "https://www.fftw.org/fftw-$FFTW_VERSION.tar.gz" >&2
+    echo "$FFTW_SHA256  $tarball" | sha256sum -c --quiet - >&2 || { echo "FFTW download checksum mismatch" >&2; exit 1; }
+    rm -rf "$top/src" && mkdir -p "$top/src" && tar xzf "$tarball" -C "$top/src" --strip-components=1
+    echo "building FFTW $FFTW_VERSION from source (logs in $top)" >&2
+    (cd "$top/src" && ./configure --prefix="$prefix" --enable-float --enable-static --disable-shared \
+        --enable-neon > "$top/configure.log" 2>&1 && make -j"$(nproc)" > "$top/make.log" 2>&1 \
+        && make install > "$top/install.log" 2>&1) || { echo "FFTW build failed, see $top" >&2; exit 1; }
+    echo "$prefix"
+}
+
 configure_and_build() {   # <build dir> <extra cmake args...>
     local dir=$1; shift
     cmake -S . -B "$dir" -G Ninja -DCMAKE_BUILD_TYPE=Release "$@"
@@ -68,6 +90,9 @@ else
         prefix=$(brew_prefix_for "$arch")
         brew_compilers "$prefix" || { echo "no gfortran under $prefix (brew install gcc fftw)"; exit 1; }
         args=(-DCMAKE_Fortran_COMPILER="$fc" -DCMAKE_C_COMPILER="$cc" -DCMAKE_PREFIX_PATH="$prefix")
+    elif [ "$arch" = aarch64 ] && [ -z "${JTTY_SYSTEM_FFTW:-}" ]; then
+        fftw=$(fftw_from_source)
+        args=(-DFFTW3F_LIB="$fftw/lib/libfftw3f.a" -DFFTW3_INCLUDE_DIR="$fftw/include")
     fi
     configure_and_build build ${args[@]+"${args[@]}"}
     cp build/jtty-sidecar build/jtty-shm-client dist/

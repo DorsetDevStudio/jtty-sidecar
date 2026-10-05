@@ -53,6 +53,7 @@ static unsigned long now_ms(void) { return GetTickCount(); }
 #  include <fcntl.h>
 #  include <semaphore.h>
 #  include <sys/mman.h>
+#  include <sys/stat.h>
 #  include <sys/time.h>
 #  include <time.h>
 #  include <unistd.h>
@@ -63,6 +64,9 @@ static JttyShm *open_segment(const char *name, void **handle)
     snprintf(full, sizeof full, "/%s", name);
     int fd = shm_open(full, O_RDWR, 0);
     if (fd < 0) return NULL;
+    /* created but not yet sized: mapping it now and reading would be a SIGBUS */
+    struct stat st;
+    if (fstat(fd, &st) != 0 || (size_t)st.st_size < sizeof(JttyShm)) { close(fd); return NULL; }
     JttyShm *shm = mmap(NULL, sizeof(JttyShm), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     close(fd);                                   /* the mapping keeps the object alive */
     if (shm == MAP_FAILED) return NULL;
@@ -104,14 +108,16 @@ int main(int argc, char **argv)
     const char *name = argv[1], *text = argv[2];
     int realtime = argc > 3 && !strcmp(argv[3], "--realtime");
 
-    /* --- open: wait up to 5 s for the server to appear --- */
+    /* --- open: wait up to 5 s for the server to appear and finish its header --- */
     void *handle = NULL;
     JttyShm *shm = NULL;
-    for (int i = 0; i < 50 && !shm; ++i) {
-        shm = open_segment(name, &handle);
-        if (!shm) sleep_ms(100);
+    for (int i = 0; i < 50; ++i) {
+        if (!shm) shm = open_segment(name, &handle);
+        if (shm && shm->magic != 0) break;      /* 0 = still being set up (magic is written last) */
+        sleep_ms(100);
     }
     if (!shm) { fprintf(stderr, "no server named %s\n", name); return 1; }
+    barrier();
     if (shm->magic != JTTY_SHM_MAGIC || shm->version != JTTY_SHM_VERSION || shm->struct_size != sizeof(JttyShm)) {
         fprintf(stderr, "protocol mismatch: magic %08x version %u size %u (want %08x %u %u)\n",
                 shm->magic, shm->version, shm->struct_size, JTTY_SHM_MAGIC, JTTY_SHM_VERSION, (unsigned)sizeof(JttyShm));

@@ -94,6 +94,13 @@ committed.
 gfortran builds one architecture at a time, which is why the universal binary
 is two builds joined afterwards. The macOS deployment target is 12.0 for both.
 
+On Linux ARM (Raspberry Pi and other aarch64 boards) compile.sh downloads FFTW
+3.3.10, checks its SHA-256 and builds it into `build-fftw/`, instead of using
+the distribution's package: with Debian's or Ubuntu's ARM FFTW the decoder's
+first FFT plans take about 33 seconds on every start (measured on a Pi 5;
+0.5 s with FFTW built here). `JTTY_SYSTEM_FFTW=1 ./compile.sh` uses the
+package anyway. run-tests.sh fails if the first decode takes over 5 seconds.
+
 ### Windows
 
 Prerequisites: [MSYS2](https://www.msys2.org) at `C:\msys64`, plus CMake and

@@ -23,7 +23,12 @@
  * little-endian); int64 fields are 8-byte aligned; the layout is fixed by the
  * static asserts at the bottom and never changes within a protocol version.
  * A client checks magic, version and struct_size before touching anything
- * else. The same binary layout is used on every platform and architecture.
+ * else. The server writes magic LAST, so a client that opens the segment
+ * while it is still being set up sees magic 0: that means "not ready, try
+ * again", not a protocol mismatch. On POSIX a client also checks the
+ * object's size (fstat) before mapping it: the server creates the object and
+ * then sizes it, and touching an unsized mapping is a SIGBUS. The same binary
+ * layout is used on every platform and architecture.
  *
  * Receive path: the client writes 12 kHz mono int16 audio into the ring
  * rx_pcm[rx_written % JTTY_RX_RING_SAMPLES], advances rx_written (total
