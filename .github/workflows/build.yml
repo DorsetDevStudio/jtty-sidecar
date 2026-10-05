@@ -3,9 +3,11 @@ name: build
 # Builds jtty-sidecar on Windows x64 with the MSYS2 mingw64 toolchain (the
 # same one compile.bat uses), runs the self tests, and keeps the binaries as a
 # workflow artifact. A tag of the form v1.2.3 also publishes a GitHub Release
-# carrying the zip and its SHA-256, so the download URL
+# carrying the zip, the bare executable and their SHA-256s, so these URLs
+# always point at the newest release:
 #   https://github.com/<owner>/jtty-sidecar/releases/latest/download/jtty-sidecar-win64.zip
-# always points at the newest release.
+#   https://github.com/<owner>/jtty-sidecar/releases/latest/download/jtty-sidecar.exe
+#   https://github.com/<owner>/jtty-sidecar/releases/latest/download/jtty-sidecar.exe.sha256
 
 on:
   push:
@@ -61,8 +63,15 @@ jobs:
           Copy-Item upstream/UPSTREAM.md dist/
           Compress-Archive -Path dist/* -DestinationPath "jtty-sidecar-win64.zip" -Force
           Copy-Item jtty-sidecar-win64.zip "jtty-sidecar-$v-win64.zip"
-          (Get-FileHash jtty-sidecar-win64.zip -Algorithm SHA256).Hash.ToLower() + "  jtty-sidecar-win64.zip" | Out-File -Encoding ascii SHA256SUMS.txt
-          (Get-FileHash "jtty-sidecar-$v-win64.zip" -Algorithm SHA256).Hash.ToLower() + "  jtty-sidecar-$v-win64.zip" | Out-File -Encoding ascii -Append SHA256SUMS.txt
+          Copy-Item dist/jtty-sidecar.exe jtty-sidecar.exe
+          $sums = @()
+          foreach ($f in "jtty-sidecar-win64.zip", "jtty-sidecar-$v-win64.zip", "jtty-sidecar.exe") {
+            $h = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+            $sums += "$h  $f"
+          }
+          $sums | Out-File -Encoding ascii SHA256SUMS.txt
+          # the bare exe's hash on its own, for a client that fetches just the exe
+          (Get-FileHash jtty-sidecar.exe -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii -NoNewline jtty-sidecar.exe.sha256
           Get-Content SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
@@ -70,6 +79,8 @@ jobs:
           name: jtty-sidecar-win64
           path: |
             jtty-sidecar-*.zip
+            jtty-sidecar.exe
+            jtty-sidecar.exe.sha256
             SHA256SUMS.txt
 
       - name: Release
@@ -79,6 +90,8 @@ jobs:
           files: |
             jtty-sidecar-win64.zip
             jtty-sidecar-*-win64.zip
+            jtty-sidecar.exe
+            jtty-sidecar.exe.sha256
             SHA256SUMS.txt
           body: |
             jtty-sidecar ${{ github.ref_name }} for Windows x64, built from this tag by GitHub Actions.
